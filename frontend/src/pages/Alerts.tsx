@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Upload, AlertTriangle, TrendingUp, Calendar, MapPin, Package, ExternalLink } from 'lucide-react';
+import { Upload, AlertTriangle, TrendingUp, Calendar, MapPin, Package, ExternalLink, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface ProductAlert {
@@ -36,8 +36,11 @@ interface AlertJSON {
   alerts: ProductAlert[];
 }
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 const Alerts = () => {
   const [uploading, setUploading] = useState(false);
+  const [fetchingFromAPI, setFetchingFromAPI] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: alerts, isLoading } = useQuery({
@@ -47,11 +50,38 @@ const Alerts = () => {
         .from('product_alerts')
         .select('*')
         .order('detected_at', { ascending: false });
-      
+
       if (error) throw error;
       return data;
     },
   });
+
+  // Fetch latest alerts from API on component mount
+  useEffect(() => {
+    fetchLatestFromAPI();
+  }, []);
+
+  const fetchLatestFromAPI = async () => {
+    setFetchingFromAPI(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/alerts/latest`);
+
+      if (response.ok) {
+        const jsonData: AlertJSON = await response.json();
+        await uploadMutation.mutateAsync(jsonData);
+        toast.success('Alertes chargées depuis le backend');
+      } else if (response.status === 404) {
+        console.log('No alerts available from backend yet');
+      } else {
+        throw new Error('Failed to fetch from API');
+      }
+    } catch (error) {
+      console.error('Error fetching from API:', error);
+      // Don't show error toast on initial load if API isn't available
+    } finally {
+      setFetchingFromAPI(false);
+    }
+  };
 
   const uploadMutation = useMutation({
     mutationFn: async (jsonData: AlertJSON) => {
@@ -153,7 +183,15 @@ const Alerts = () => {
             Surveillance intelligente du marché et des événements
           </p>
         </div>
-        <div>
+        <div className="flex gap-2">
+          <Button
+            onClick={fetchLatestFromAPI}
+            disabled={fetchingFromAPI}
+            variant="outline"
+          >
+            <RefreshCw className={`mr-2 h-4 w-4 ${fetchingFromAPI ? 'animate-spin' : ''}`} />
+            {fetchingFromAPI ? 'Chargement...' : 'Actualiser'}
+          </Button>
           <input
             type="file"
             accept=".json"

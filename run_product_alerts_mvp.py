@@ -44,7 +44,7 @@ def print_section(title: str):
 
 def run_mvp_pipeline(
     top_n_locations: int = 5,
-    max_articles: int = 50,
+    max_articles: int = 10,
     severity_threshold: str = "medium"
 ):
     """
@@ -385,7 +385,7 @@ def main():
     parser.add_argument(
         "--max-articles",
         type=int,
-        default=50,
+        default=10,
         help="Maximum number of articles to process (default: 50, controls API costs)"
     )
 

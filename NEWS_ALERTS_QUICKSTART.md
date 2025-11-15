@@ -21,31 +21,43 @@ A complete **Event Detector** system that fetches news and detects black swan ev
 
 ## Installation
 
-### Required Packages
+### Quick Setup
 
 ```bash
-pip install anthropic requests pydantic
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment variables
+cp .env.example .env
+# Edit .env and add your API keys
 ```
 
 ### Environment Variables
 
+Create a `.env` file in the project root:
+
 ```bash
-export ANTHROPIC_API_KEY="your-anthropic-api-key"
-export NEWS_API_KEY="your-newsapi-key"  # Optional (100 free requests/day)
+# Required
+ANTHROPIC_API_KEY=your-anthropic-api-key
+
+# Optional (100 free requests/day)
+NEWS_API_KEY=your-newsapi-key
 ```
 
 Get keys:
 - Anthropic: https://console.anthropic.com/
 - NewsAPI: https://newsapi.org/register
 
+**📖 For detailed setup instructions, see [SETUP.md](SETUP.md)**
+
 ## Usage
 
 ### Demo Mode (Recommended First Step)
 
-Test with sample articles (requires ANTHROPIC_API_KEY):
+Test with sample articles (requires ANTHROPIC_API_KEY in .env):
 
 ```bash
-export ANTHROPIC_API_KEY="your-key-here"
+# Make sure .env file has ANTHROPIC_API_KEY set
 python run_news_alerts.py --demo
 ```
 

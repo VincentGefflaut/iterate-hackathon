@@ -12,6 +12,18 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import List, Optional
 import os
+from pathlib import Path
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    # Look for .env in project root (two levels up from this file)
+    env_path = Path(__file__).parent.parent / '.env'
+    load_dotenv(dotenv_path=env_path)
+except ImportError:
+    # python-dotenv not installed, will fall back to system env vars
+    pass
+
 from .models import NewsArticle
 
 

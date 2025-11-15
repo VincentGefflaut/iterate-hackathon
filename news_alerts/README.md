@@ -44,14 +44,20 @@ Pydantic models for structured data:
 
 Required packages:
 ```bash
-pip install anthropic requests feedparser pydantic
+pip install -r requirements.txt
 ```
 
-Environment variables:
+Environment variables (.env file):
 ```bash
-export ANTHROPIC_API_KEY="your-api-key"
-export NEWS_API_KEY="your-newsapi-key"  # Optional
+# Create .env file in project root
+cp .env.example .env
+
+# Add your keys:
+ANTHROPIC_API_KEY=your-api-key
+NEWS_API_KEY=your-newsapi-key  # Optional
 ```
+
+See [SETUP.md](../SETUP.md) for detailed installation instructions.
 
 ## Usage
 

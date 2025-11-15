@@ -19,6 +19,11 @@ from .news_fetcher import NewsFetcher
 from .event_detector import EventDetectorAgent
 from .event_storage import EventStorage
 
+# Product-aware detection
+from .top_products_loader import TopProductsLoader, LocationProducts
+from .product_news_fetcher import ProductNewsFetcher
+from .product_event_detector import ProductEventDetector
+
 # Context Matching (Agent 2)
 from .alert_models import (
     BusinessAlert,
@@ -45,6 +50,11 @@ __all__ = [
     "NewsFetcher",
     "EventDetectorAgent",
     "EventStorage",
+    # Product-aware detection
+    "TopProductsLoader",
+    "LocationProducts",
+    "ProductNewsFetcher",
+    "ProductEventDetector",
     # Context Matching
     "BusinessAlert",
     "AlertDecision",

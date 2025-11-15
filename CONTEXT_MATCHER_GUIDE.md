@@ -98,6 +98,90 @@ matcher = ContextMatcher(enhance_with_llm=True)
 matcher = ContextMatcher(enhance_with_llm=False)
 ```
 
+### Data-Driven Matching (NEW)
+
+The Context Matcher now supports **data-driven decision making** using real business data from the alert_features pipeline:
+
+**Heuristic vs. Data-Driven:**
+
+| Mode | How It Works | Data Requirements | Accuracy |
+|------|--------------|-------------------|----------|
+| **Heuristic** | Keyword matching + severity thresholds | None | Good |
+| **Data-Driven** | Real inventory + consumption + traffic patterns | Sales & inventory CSV files | Excellent |
+
+**What Data-Driven Adds:**
+
+For **Health Emergencies:**
+- ✅ Actual inventory levels (not guesses)
+- ✅ Real consumption rates (normal vs outbreak)
+- ✅ Days of supply calculations (4.5x outbreak multiplier)
+- ✅ Supplier information with lead times
+- ✅ Location-specific stock breakdowns
+
+Example decision logic:
+```python
+# Heuristic mode:
+if event.severity == "high":
+    generate_alert()  # Generic alert
+
+# Data-driven mode:
+features = calculator.get_health_emergency_features(
+    category="OTC : GIT",
+    as_of_date=today
+)
+
+if features['inventory_health']['days_of_supply_outbreak'] < 5:
+    generate_alert(
+        reason=f"CRITICAL: Only {days} days at outbreak rate",
+        confidence=0.95,  # High confidence with real data
+        supplier_contacts=features['suppliers']
+    )
+```
+
+For **Major Events:**
+- ✅ Historical traffic baselines per location
+- ✅ Peak capacity patterns
+- ✅ Event-relevant category inventory
+- ✅ Traffic impact estimates (historical 80% lift)
+- ✅ Product-level stock availability
+
+**Enable/Disable:**
+```python
+# Heuristic-based (default, no data files needed)
+matcher = ContextMatcher(use_real_data=False)
+
+# Data-driven (requires sales + inventory CSV files)
+matcher = ContextMatcher(use_real_data=True)
+```
+
+**Data Requirements:**
+
+Place these files in your project:
+```
+data/
+  input/
+    Retail/
+      retail_sales_data_01_09_2023_to_31_10_2025.csv
+      retail_inventory_snapshot_30_10_25.csv
+```
+
+If files not found, system **gracefully falls back** to heuristic mode with a warning.
+
+**CLI Usage:**
+```bash
+# Heuristic mode (no data needed)
+python run_context_matcher.py
+
+# Data-driven mode (uses real business data)
+python run_context_matcher.py --use-real-data
+
+# Data-driven + LLM enhancements (best of both worlds)
+python run_context_matcher.py --use-real-data
+
+# Data-driven only, no LLM (fast + accurate)
+python run_context_matcher.py --use-real-data --no-llm
+```
+
 ## Usage
 
 ### Basic Usage

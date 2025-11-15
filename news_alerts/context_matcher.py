@@ -14,6 +14,7 @@ Uses business rules for binary YES/NO decisions, with optional LLM enhancements 
 
 import os
 import anthropic
+import pandas as pd
 from datetime import date, datetime
 from typing import List, Optional, Dict, Any, Tuple
 from pathlib import Path
@@ -31,6 +32,14 @@ from .models import DetectedEvent
 from .alert_models import BusinessAlert, AlertDecision, convert_playbook_to_actions
 from .playbooks import get_playbook
 from .event_storage import EventStorage
+
+# Import alert_features for data-driven matching
+try:
+    from alert_features import AlertFeatureCalculator
+    ALERT_FEATURES_AVAILABLE = True
+except ImportError:
+    ALERT_FEATURES_AVAILABLE = False
+    print("Warning: alert_features package not available. Data-driven matching disabled.")
 
 
 class ContextMatcher:
@@ -53,6 +62,14 @@ class ContextMatcher:
         self.use_real_data = use_real_data
         self.enhance_with_llm = enhance_with_llm
         self.storage = EventStorage()
+
+        # Initialize data-driven components
+        self.feature_calculator = None
+        self.sales_df = None
+        self.inventory_df = None
+
+        if self.use_real_data:
+            self._load_business_data()
 
         # Initialize LLM client if enhancements enabled
         if self.enhance_with_llm:
@@ -103,6 +120,68 @@ class ContextMatcher:
                 "moderate": ["medium", "moderate", "low"]
             }
         }
+
+    def _load_business_data(self):
+        """
+        Load sales and inventory data for data-driven matching
+
+        Attempts to load:
+        - Retail sales data (for historical patterns, consumption rates)
+        - Inventory snapshot (for current stock levels)
+
+        If data files not found, falls back to heuristic mode.
+        """
+        if not ALERT_FEATURES_AVAILABLE:
+            print("⚠️  alert_features package not available. Install with: pip install -e .")
+            print("   Falling back to heuristic-based matching.")
+            self.use_real_data = False
+            return
+
+        try:
+            print("Loading business data for data-driven matching...")
+
+            # Define data paths
+            base_path = Path(__file__).parent.parent
+            sales_file = base_path / "data" / "input" / "Retail" / "retail_sales_data_01_09_2023_to_31_10_2025.csv"
+            inventory_file = base_path / "data" / "input" / "Retail" / "retail_inventory_snapshot_30_10_25.csv"
+
+            # Check if files exist
+            if not sales_file.exists():
+                print(f"⚠️  Sales data not found: {sales_file}")
+                print("   Place your sales CSV in: data/input/Retail/retail_sales_data_*.csv")
+                print("   Falling back to heuristic-based matching.")
+                self.use_real_data = False
+                return
+
+            if not inventory_file.exists():
+                print(f"⚠️  Inventory data not found: {inventory_file}")
+                print("   Place your inventory CSV in: data/input/Retail/retail_inventory_snapshot_*.csv")
+                print("   Falling back to heuristic-based matching.")
+                self.use_real_data = False
+                return
+
+            # Load sales data
+            print(f"  Loading sales data from {sales_file.name}...")
+            self.sales_df = pd.read_csv(sales_file, encoding='utf-8-sig', low_memory=False)
+            print(f"  ✓ Loaded {len(self.sales_df):,} sales records")
+
+            # Load inventory data
+            print(f"  Loading inventory data from {inventory_file.name}...")
+            self.inventory_df = pd.read_csv(inventory_file, encoding='utf-8-sig', low_memory=False)
+            print(f"  ✓ Loaded {len(self.inventory_df):,} inventory records")
+
+            # Create AlertFeatureCalculator
+            self.feature_calculator = AlertFeatureCalculator(self.sales_df, self.inventory_df)
+            print("  ✓ AlertFeatureCalculator initialized")
+            print("✅ Data-driven matching enabled\n")
+
+        except Exception as e:
+            print(f"⚠️  Error loading business data: {e}")
+            print("   Falling back to heuristic-based matching.")
+            self.use_real_data = False
+            self.feature_calculator = None
+            self.sales_df = None
+            self.inventory_df = None
 
     def evaluate_events(self, target_date: Optional[date] = None) -> List[BusinessAlert]:
         """
@@ -284,13 +363,14 @@ Format your response with clear headings for each section."""
         1. Check if we stock relevant products (OTC health products)
         2. Assess severity based on event details
         3. Determine if inventory action needed
+        4. (Data-driven): Check actual inventory levels and consumption rates
         """
         # Decision logic
         decision_reasons = []
         alert_needed = False
         confidence = 0.7  # Base confidence
 
-        # Rule 1: Check product relevance
+        # Rule 1: Check product relevance (keyword matching)
         affected_categories = []
         for category in self.config["health_emergency_categories"]:
             # Check if event mentions relevant keywords
@@ -304,7 +384,7 @@ Format your response with clear headings for each section."""
                 if "analgesic" in category.lower():
                     affected_categories.append(category)
 
-            if any(keyword in event_text for keyword in ["stomach", "nausea", "vomit", "diarrhea"]):
+            if any(keyword in event_text for keyword in ["stomach", "nausea", "vomit", "diarrhea", "norovirus"]):
                 if "git" in category.lower():
                     affected_categories.append(category)
 
@@ -319,6 +399,79 @@ Format your response with clear headings for each section."""
         else:
             decision_reasons.append("No directly relevant product categories identified")
             return None  # No alert if we don't stock relevant products
+
+        # DATA-DRIVEN ENHANCEMENT: Check actual inventory levels
+        if self.use_real_data and self.feature_calculator:
+            try:
+                # Use the first affected category for detailed analysis
+                primary_category = affected_categories[0]
+                as_of_date = date.today()
+
+                # Get health emergency features
+                features = self.feature_calculator.get_health_emergency_features(
+                    category=primary_category,
+                    as_of_date=as_of_date
+                )
+
+                if features:
+                    # Check inventory health
+                    if 'inventory_health' in features:
+                        inv_health = features['inventory_health']
+
+                        # Critical decision point: Days of supply during outbreak
+                        if inv_health.get('days_of_supply_outbreak'):
+                            days_supply = inv_health['days_of_supply_outbreak']
+
+                            decision_reasons.append(
+                                f"📊 DATA: Current stock = {inv_health.get('total_current_stock', 0):.0f} units"
+                            )
+                            decision_reasons.append(
+                                f"📊 DATA: Days of supply at outbreak rate (4.5x normal) = {days_supply:.1f} days"
+                            )
+
+                            # CRITICAL ALERT: Less than 5 days of outbreak supply
+                            if days_supply < 5:
+                                alert_needed = True
+                                confidence = 0.95  # Very high confidence with real data
+                                decision_reasons.append(
+                                    f"🚨 CRITICAL: Only {days_supply:.1f} days of supply at outbreak consumption rate!"
+                                )
+
+                            # HIGH ALERT: 5-10 days
+                            elif days_supply < 10:
+                                alert_needed = True
+                                confidence = 0.85
+                                decision_reasons.append(
+                                    f"⚠️  HIGH: {days_supply:.1f} days of supply - should restock soon"
+                                )
+
+                            # MODERATE ALERT: 10-20 days
+                            elif days_supply < 20:
+                                decision_reasons.append(
+                                    f"✓ Adequate stock: {days_supply:.1f} days of supply at outbreak rate"
+                                )
+                            else:
+                                decision_reasons.append(
+                                    f"✓ Strong stock position: {days_supply:.1f} days of supply"
+                                )
+
+                        # Normal supply info
+                        if inv_health.get('days_of_supply_normal'):
+                            decision_reasons.append(
+                                f"📊 DATA: Days of supply at normal rate = {inv_health['days_of_supply_normal']:.1f} days"
+                            )
+
+                    # Add consumption data
+                    decision_reasons.append(
+                        f"📊 DATA: Normal daily consumption = {features.get('daily_avg_units', 0):.1f} units/day"
+                    )
+                    decision_reasons.append(
+                        f"📊 DATA: Outbreak estimated consumption = {features.get('outbreak_estimated_peak_units', 0):.1f} units/day"
+                    )
+
+            except Exception as e:
+                decision_reasons.append(f"⚠️  Could not load data features: {e}")
+                # Continue with heuristic-based decision
 
         # Rule 2: Assess severity
         severity_level = "moderate"
@@ -458,6 +611,61 @@ Format your response with clear headings for each section."""
             # General Dublin event - all stores potentially affected
             affected_locations = [store["name"] for store in self.config["store_locations"]]
             decision_reasons.append("Dublin-wide event - all stores may see impact")
+
+        # DATA-DRIVEN ENHANCEMENT: Check location traffic and inventory
+        if self.use_real_data and self.feature_calculator and affected_locations:
+            try:
+                # Analyze first affected location
+                primary_location = affected_locations[0]
+                as_of_date = date.today()
+
+                # Get major event features
+                features = self.feature_calculator.get_major_event_features(
+                    location=primary_location,
+                    as_of_date=as_of_date
+                )
+
+                if features:
+                    # Traffic baseline data
+                    avg_transactions = features.get('avg_transactions_per_day', 0)
+                    peak_traffic = features.get('peak_day_traffic', 0)
+
+                    decision_reasons.append(
+                        f"📊 DATA: {primary_location} avg daily transactions = {avg_transactions:.0f}"
+                    )
+                    decision_reasons.append(
+                        f"📊 DATA: Historical peak traffic = {peak_traffic:.0f} transactions/day"
+                    )
+
+                    # Event impact estimate (historical 80% lift)
+                    if 'historical_event_lift' in features:
+                        lift = features['historical_event_lift']
+                        estimated_traffic = avg_transactions * lift
+                        decision_reasons.append(
+                            f"📊 DATA: Estimated event traffic = {estimated_traffic:.0f} transactions ({lift:.1%} lift)"
+                        )
+
+                        # Alert if event expected to exceed peak capacity
+                        if estimated_traffic > peak_traffic:
+                            alert_needed = True
+                            confidence = 0.90
+                            decision_reasons.append(
+                                f"🚨 ALERT: Estimated traffic exceeds historical peak by {((estimated_traffic/peak_traffic - 1) * 100):.0f}%"
+                            )
+
+                    # Inventory status for event-relevant categories
+                    if 'inventory_status' in features:
+                        inv_status = features['inventory_status']
+                        if inv_status:
+                            decision_reasons.append(f"📊 DATA: Event-relevant inventory checked for {len(inv_status)} categories")
+                            for cat, details in list(inv_status.items())[:3]:  # Show top 3
+                                decision_reasons.append(
+                                    f"  • {cat}: {details.get('stock_units', 0):.0f} units in stock"
+                                )
+
+            except Exception as e:
+                decision_reasons.append(f"⚠️  Could not load major event features: {e}")
+                # Continue with heuristic-based decision
 
         # Rule 3: Urgency based on event date
         urgency = "within_week"

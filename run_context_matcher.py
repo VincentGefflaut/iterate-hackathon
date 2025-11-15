@@ -9,9 +9,11 @@ This is Phase 2 of the News Alerts system:
 Features:
 - Rule-based decisions (fast, deterministic, $0 cost)
 - Optional LLM enhancements (rich explanations, ~$0.01/alert)
+- Data-driven matching (uses real sales/inventory data when available)
 
 Usage:
-    python run_context_matcher.py                    # Process today's events with LLM
+    python run_context_matcher.py                    # Heuristic rules + LLM
+    python run_context_matcher.py --use-real-data    # Data-driven rules + LLM
     python run_context_matcher.py --no-llm           # Rules only (faster, cheaper)
     python run_context_matcher.py --date 2024-11-15  # Process specific date
     python run_context_matcher.py --stats             # Show alert statistics
@@ -27,7 +29,12 @@ from news_alerts.context_matcher import ContextMatcher
 from news_alerts.alert_models import format_alert_for_display, DailyAlertReport, format_daily_report
 
 
-def run_context_matching(target_date: date = None, save_alerts: bool = True, enhance_with_llm: bool = True):
+def run_context_matching(
+    target_date: date = None,
+    save_alerts: bool = True,
+    enhance_with_llm: bool = True,
+    use_real_data: bool = False
+):
     """
     Run context matching on detected events
 
@@ -35,6 +42,7 @@ def run_context_matching(target_date: date = None, save_alerts: bool = True, enh
         target_date: Date to process (default: today)
         save_alerts: Whether to save alerts to files
         enhance_with_llm: Whether to use LLM for rich explanations (default: True)
+        use_real_data: Whether to use real sales/inventory data (default: False)
     """
     if target_date is None:
         target_date = date.today()
@@ -43,12 +51,13 @@ def run_context_matching(target_date: date = None, save_alerts: bool = True, enh
     print("CONTEXT MATCHER - Business Alert Generation")
     print("=" * 80)
     print(f"Date: {target_date.isoformat()}")
+    print(f"Data Mode: {'Real Data (Sales + Inventory)' if use_real_data else 'Heuristic-Based'}")
     print(f"LLM Enhancements: {'Enabled' if enhance_with_llm else 'Disabled'}")
     print()
 
     # Initialize matcher
     print("Initializing Context Matcher...")
-    matcher = ContextMatcher(use_real_data=False, enhance_with_llm=enhance_with_llm)
+    matcher = ContextMatcher(use_real_data=use_real_data, enhance_with_llm=enhance_with_llm)
 
     # Evaluate events
     print(f"\nEvaluating events for {target_date.isoformat()}...")
@@ -212,6 +221,12 @@ def main():
         help="Disable LLM enhancements (faster, cheaper, uses only rule-based logic)"
     )
 
+    parser.add_argument(
+        "--use-real-data",
+        action="store_true",
+        help="Use real sales/inventory data for data-driven matching (requires data files)"
+    )
+
     args = parser.parse_args()
 
     if args.stats:
@@ -228,7 +243,8 @@ def main():
         run_context_matching(
             target_date=target_date,
             save_alerts=not args.no_save,
-            enhance_with_llm=not args.no_llm
+            enhance_with_llm=not args.no_llm,
+            use_real_data=args.use_real_data
         )
 
 

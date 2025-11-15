@@ -1,0 +1,92 @@
+# Source track - AI for Retail -  Challenges
+
+## **About Source -** https://www.source.shop/
+
+Source is building the future of **AI-native procurement and retail operations**, enabling businesses to make faster, smarter, and more automated decisions using their real operational data. The platform connects disparate systems—**ERP exports, spreadsheets, sales data, and inventory records**—and transforms them into structured, actionable intelligence.
+
+---
+
+## About the track
+
+Most businesses today still run on **traditional systems**—ERP tools, Excel spreadsheets, and siloed databases.
+
+Large Language Models have **never been natively trained** on this kind of operational data, even though it powers the majority of the world’s economy.
+
+Retailers in particular manage their core processes—**finance, inventory, sales, supply chain, operations**—through ERPs and manual spreadsheets.
+
+These systems contain extremely valuable information: **inventory**, **supplier lists**, **sales**, **customer records**, and more.
+
+For this track, you’ll be working with **real operational data from a pharmacy with 20,000+ products**.
+
+---
+
+## **Data Provided**
+
+You will get **2 years** of:
+
+- Physical retail sales (10+ locations)
+- Online sales (Shopify export)
+
+The dataset includes:
+
+- **Sales data**
+- **Inventory data**
+- **Customer records**
+
+Format: **CSV**
+
+Dataset access: https://drive.google.com/file/d/1WexqmYfI5iOuUThk4NYZKV6Txu7ayJW0/view?usp=sharing
+
+## **Important Notes**
+
+1. **The data is messy.**
+    
+    Expect human errors—duplicate SKUs, inconsistent naming, typos, mismatched formats.
+    
+2. **LLMs are inconsistent.**
+    
+    When dealing with sales, inventory, or customer-level data, they often hallucinate or make assumptions. Guardrails are needed.
+    
+3. **Format consistency is hard.**
+    
+    Getting LLMs to generate reliable purchase orders, reports, or Excel structures requires creative constraints.
+    
+
+> Creative, robust approaches will be essential.
+> 
+
+## **Supplementary Context (MUST READ)**
+
+You are given **6 human-made Excel examples** showing how retail operations teams manually handle reports, stock updates, ordering, and data cleanup today.
+
+Study them carefully—they are your **benchmark**.
+
+🔗 Retail Human Work Reference
+
+https://drive.google.com/drive/folders/1uud5jw3QV_OQPG7AT8glH7zPe2wHQecf?usp=sharing
+
+*(More will be added.)*
+
+---
+
+## **Ideas & Inspiration**
+
+### **→ Data-Fix Agent**
+
+An AI agent that scans the dataset for anomalies, flags them, and lets the user correct the source-of-truth automatically—no more manual Excel cleaning.
+
+### **→ AI-Built ERP System**
+
+A fully autonomous platform that **builds ERP-like functionality from the data itself**, replacing costly ERP deployments with dynamic AI-built workflows.
+
+### **→ Sales Trend Agent**
+
+A system that detects trends, patterns, and low-stock alerts in real time, notifying the operations team and generating suggested actions.
+
+---
+
+## **Ressources**
+
+Source overview → https://www.youtube.com/watch?v=Qk6LHkfaFWQ
+
+“Build me an ERP dashboard” → https://www.tella.tv/video/liams-video-cm6l - Password: **source**

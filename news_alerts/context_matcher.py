@@ -93,12 +93,31 @@ class ContextMatcher:
                 "Masks & PPE"
             ],
 
-            # Locations (stores)
+            # Locations (stores) with coordinates for distance calculation
             "store_locations": [
                 {"name": "Baggot St", "lat": 53.3314, "lon": -6.2462},
                 {"name": "Grafton St", "lat": 53.3424, "lon": -6.2597},
-                {"name": "O'Connell St", "lat": 53.3498, "lon": -6.2603}
+                {"name": "O'Connell St", "lat": 53.3498, "lon": -6.2603},
+                {"name": "Dame St", "lat": 53.3445, "lon": -6.2667},
+                {"name": "Capel St", "lat": 53.3475, "lon": -6.2678},
+                {"name": "Talbot St", "lat": 53.3505, "lon": -6.2536},
+                {"name": "Thomas St", "lat": 53.3428, "lon": -6.2834},
+                {"name": "Rathmines", "lat": 53.3238, "lon": -6.2648},
+                {"name": "Ranelagh", "lat": 53.3257, "lon": -6.2555},
+                {"name": "Ballsbridge", "lat": 53.3327, "lon": -6.2297}
             ],
+
+            # Dublin venue coordinates for proximity calculations
+            "dublin_venues": {
+                "3arena": {"lat": 53.3486, "lon": -6.2294},
+                "croke park": {"lat": 53.3606, "lon": -6.2513},
+                "aviva stadium": {"lat": 53.3356, "lon": -6.2284},
+                "convention centre": {"lat": 53.3476, "lon": -6.2397},
+                "rds": {"lat": 53.3293, "lon": -6.2317},
+                "st stephens green": {"lat": 53.3381, "lon": -6.2595},
+                "temple bar": {"lat": 53.3456, "lon": -6.2647},
+                "trinity college": {"lat": 53.3438, "lon": -6.2546}
+            },
 
             # Distance thresholds (km)
             "proximity_thresholds": {
@@ -183,6 +202,85 @@ class ContextMatcher:
             self.sales_df = None
             self.inventory_df = None
 
+    @staticmethod
+    def _calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """
+        Calculate distance between two coordinates using Haversine formula
+
+        Args:
+            lat1, lon1: First coordinate
+            lat2, lon2: Second coordinate
+
+        Returns:
+            Distance in kilometers
+        """
+        import math
+
+        # Earth's radius in kilometers
+        R = 6371.0
+
+        # Convert to radians
+        lat1_rad = math.radians(lat1)
+        lat2_rad = math.radians(lat2)
+        dlon = math.radians(lon2 - lon1)
+        dlat = math.radians(lat2 - lat1)
+
+        # Haversine formula
+        a = math.sin(dlat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+        distance = R * c
+        return distance
+
+    def _find_nearby_stores(self, event_lat: float, event_lon: float, max_distance_km: float = 10.0) -> List[Tuple[str, float]]:
+        """
+        Find stores within a certain distance of an event location
+
+        Args:
+            event_lat, event_lon: Event coordinates
+            max_distance_km: Maximum distance in km
+
+        Returns:
+            List of tuples (store_name, distance_km) sorted by distance
+        """
+        nearby_stores = []
+
+        for store in self.config["store_locations"]:
+            distance = self._calculate_distance(
+                event_lat, event_lon,
+                store["lat"], store["lon"]
+            )
+
+            if distance <= max_distance_km:
+                nearby_stores.append((store["name"], distance))
+
+        # Sort by distance
+        nearby_stores.sort(key=lambda x: x[1])
+
+        return nearby_stores
+
+    def _get_venue_coordinates(self, location_text: str) -> Optional[Tuple[float, float]]:
+        """
+        Try to extract coordinates from location text by matching known venues
+
+        Args:
+            location_text: Location description from event
+
+        Returns:
+            Tuple of (lat, lon) if found, None otherwise
+        """
+        if not location_text:
+            return None
+
+        location_lower = location_text.lower()
+
+        # Check known venues
+        for venue_name, coords in self.config["dublin_venues"].items():
+            if venue_name in location_lower:
+                return (coords["lat"], coords["lon"])
+
+        return None
+
     def evaluate_events(self, target_date: Optional[date] = None) -> List[BusinessAlert]:
         """
         Evaluate all detected events for a given date and generate alerts
@@ -228,6 +326,12 @@ class ContextMatcher:
             alert = self._evaluate_health_emergency(event)
         elif event.event_type == "major_event":
             alert = self._evaluate_major_event(event)
+        elif event.event_type == "weather_extreme":
+            alert = self._evaluate_weather_extreme(event)
+        elif event.event_type == "supply_disruption":
+            alert = self._evaluate_supply_disruption(event)
+        elif event.event_type == "viral_trend":
+            alert = self._evaluate_viral_trend(event)
         else:
             # For other event types, create basic alert
             alert = self._evaluate_generic_event(event)
@@ -278,17 +382,41 @@ class ContextMatcher:
             return alert
 
     def _build_enhancement_prompt(self, alert: BusinessAlert, event: DetectedEvent) -> str:
-        """Build prompt for LLM to enhance alert"""
+        """Build enhanced prompt for LLM with historical context and data insights"""
+
+        # Extract key metrics for context
+        key_metrics_str = ""
+        if alert.decision.key_metrics:
+            key_metrics_str = "\n\nDATA INSIGHTS:"
+            for key, value in alert.decision.key_metrics.items():
+                key_metrics_str += f"\n  • {key}: {value}"
+
+        # Build historical context section
+        historical_context = ""
+        if self.use_real_data:
+            historical_context = "\n\nHISTORICAL CONTEXT:"
+            historical_context += "\n  This alert was generated using real sales and inventory data."
+            historical_context += "\n  The reasoning above includes actual stock levels, consumption rates, and traffic patterns."
+            historical_context += "\n  Use these data points to provide specific, quantitative recommendations."
+
+        # Add confidence level interpretation
+        confidence_str = f"\nDecision Confidence: {alert.decision.confidence:.0%}"
+        if alert.decision.confidence >= 0.90:
+            confidence_str += " (VERY HIGH - backed by real data)"
+        elif alert.decision.confidence >= 0.75:
+            confidence_str += " (HIGH - strong indicators)"
+        elif alert.decision.confidence >= 0.60:
+            confidence_str += " (MODERATE - some uncertainty)"
+        else:
+            confidence_str += " (LOW - requires validation)"
 
         prompt = f"""You are a business analyst for a retail pharmacy chain in Dublin, Ireland.
 
-A rule-based system has generated a business alert based on a detected event. Your job is to:
-1. Provide a clear, natural language explanation of the business impact
-2. Enhance the action recommendations with specific, practical details
-3. Identify additional considerations and risks
-4. Provide talking points for managers to brief their teams
+A data-driven alert system has generated a business alert based on a detected event. Your job is to translate technical insights into actionable business recommendations.
 
-EVENT DETECTED:
+========================
+EVENT DETECTED
+========================
 Title: {event.title}
 Description: {event.description}
 Type: {event.event_type}
@@ -296,46 +424,82 @@ Severity: {event.severity}
 Location: {event.location or 'Not specified'}
 Date: {event.event_date or 'Ongoing'}
 
-RULE-BASED DECISION:
+========================
+ALERT DECISION
+========================
 Alert Type: {alert.alert_type}
 Severity: {alert.severity}
 Urgency: {alert.urgency}
-Affected Categories: {', '.join(alert.affected_categories) if alert.affected_categories else 'None'}
-Affected Stores: {', '.join(alert.affected_locations) if alert.affected_locations else 'All stores'}
+Affected Categories: {', '.join(alert.affected_categories) if alert.affected_categories else 'All product categories'}
+Affected Stores: {', '.join(alert.affected_locations) if alert.affected_locations else 'All stores'}{confidence_str}{key_metrics_str}{historical_context}
 
-Decision Reasoning:
+========================
+DECISION REASONING
+========================
 {chr(10).join(f"  • {reason}" for reason in alert.decision.reasoning)}
 
-Current Recommended Actions:
-IMMEDIATE:
-{chr(10).join(f"  {i}. {action}" for i, action in enumerate(alert.immediate_actions, 1)) if alert.immediate_actions else "  None"}
+========================
+RECOMMENDED ACTIONS
+========================
+IMMEDIATE (Next 24 hours):
+{chr(10).join(f"  {i}. {action}" for i, action in enumerate(alert.immediate_actions, 1)) if alert.immediate_actions else "  None specified"}
 
-SHORT-TERM:
-{chr(10).join(f"  {i}. {action}" for i, action in enumerate(alert.short_term_actions, 1)) if alert.short_term_actions else "  None"}
+SHORT-TERM (Next 2-7 days):
+{chr(10).join(f"  {i}. {action}" for i, action in enumerate(alert.short_term_actions, 1)) if alert.short_term_actions else "  None specified"}
 
-Please provide:
+========================
+YOUR TASK
+========================
 
-1. BUSINESS IMPACT SUMMARY (2-3 sentences):
-   A clear, jargon-free explanation of what this means for our business. Focus on customer needs, sales implications, and operational challenges.
+Provide a comprehensive business analysis with these sections:
 
-2. ENHANCED ACTIONS (be specific and practical):
-   - For each recommended action, add practical details like:
-     * Which specific products to focus on
-     * How to prioritize (what to do first)
-     * Tips for execution
-   - Suggest 1-2 additional actions if warranted
+1. EXECUTIVE SUMMARY (2-3 sentences):
+   Translate the technical alert into a clear business narrative. What's happening, why it matters, and what we should do.
 
-3. RISK ASSESSMENT:
-   - What could go wrong if we don't act?
-   - What are the upside opportunities?
-   - Timeline considerations (how quickly must we act?)
+2. FINANCIAL IMPACT:
+   - Estimated revenue opportunity or risk (be specific if data provided)
+   - Cost of action vs. cost of inaction
+   - ROI considerations
 
-4. MANAGER TALKING POINTS (3-5 bullet points):
-   Key messages to communicate to store teams, phrased for verbal delivery.
+3. DETAILED ACTION PLAN:
+   For each recommended action, provide:
+   - WHAT: Specific products/SKUs to focus on (use category names from above)
+   - HOW: Practical execution steps
+   - WHO: Specific roles responsible
+   - WHEN: Precise timeline
+   - WHY: Business rationale
 
-Be specific to Dublin/Ireland market. Focus on actionable insights. Keep language professional but accessible.
+4. RISK ANALYSIS:
+   - Primary risks if we don't act (quantify where possible)
+   - Secondary risks from acting (overcorrection, opportunity cost)
+   - Mitigation strategies
+   - Timeline pressure (how fast must we move?)
 
-Format your response with clear headings for each section."""
+5. COMPETITIVE INTELLIGENCE:
+   - How competitors might respond
+   - First-mover advantages
+   - Market positioning opportunities
+
+6. CUSTOMER IMPACT:
+   - How customers will be affected
+   - Messaging guidelines for store staff
+   - Service level expectations
+
+7. MANAGER BRIEFING POINTS (5-7 bullets):
+   Clear, confident talking points for managers to deliver to their teams.
+   Focus on: what's happening, what we're doing, what success looks like.
+
+CONTEXT NOTES:
+- You operate 10 retail pharmacy stores across Dublin
+- Average transaction value: €12
+- Peak traffic times: lunch (12-2pm) and evening (5-7pm)
+- 80+ product categories, 18,000+ SKUs
+- You compete with Boots, LloydsPharmacy, and independent pharmacies
+- Irish customers value personal service and expert advice
+
+Be specific. Use data from the reasoning section. If days of supply is mentioned, use it. If traffic patterns are shown, reference them. Make this analysis tactical and immediately actionable.
+
+Format your response with clear markdown headings (## for sections)."""
 
         return prompt
 
@@ -586,31 +750,51 @@ Format your response with clear headings for each section."""
         else:
             decision_reasons.append(f"Small event: {attendance:,} expected attendees")
 
-        # Rule 2: Location proximity (simplified - would use real geocoding in production)
+        # Rule 2: Location proximity with intelligent distance calculations
         affected_locations = []
         if event.location:
-            location_lower = event.location.lower()
+            # Try to get coordinates for the event
+            event_coords = self._get_venue_coordinates(event.location)
 
-            # Check for specific Dublin venues
-            high_traffic_venues = ["3arena", "croke park", "aviva stadium", "convention centre", "rds"]
+            if event_coords:
+                event_lat, event_lon = event_coords
+                decision_reasons.append(f"Event location identified: {event.location}")
 
-            if any(venue in location_lower for venue in high_traffic_venues):
-                decision_reasons.append(f"Major venue: {event.location}")
-                alert_needed = True
-                confidence += 0.1
+                # Find nearby stores using distance calculations
+                nearby_stores = self._find_nearby_stores(event_lat, event_lon, max_distance_km=5.0)
 
-                # Map to nearby stores (simplified)
-                if "3arena" in location_lower or "north wall" in location_lower:
-                    affected_locations = ["O'Connell St"]
-                elif "grafton" in location_lower or "temple bar" in location_lower:
-                    affected_locations = ["Grafton St"]
+                if nearby_stores:
+                    # Categorize by impact zone
+                    high_impact_stores = [name for name, dist in nearby_stores if dist <= self.config["proximity_thresholds"]["high_impact"]]
+                    moderate_impact_stores = [name for name, dist in nearby_stores if self.config["proximity_thresholds"]["high_impact"] < dist <= self.config["proximity_thresholds"]["moderate_impact"]]
+
+                    if high_impact_stores:
+                        affected_locations = high_impact_stores
+                        decision_reasons.append(
+                            f"🎯 {len(high_impact_stores)} store(s) within {self.config['proximity_thresholds']['high_impact']}km: {', '.join(high_impact_stores)}"
+                        )
+                        alert_needed = True
+                        confidence += 0.15
+                    elif moderate_impact_stores:
+                        affected_locations = moderate_impact_stores
+                        decision_reasons.append(
+                            f"📍 {len(moderate_impact_stores)} store(s) within {self.config['proximity_thresholds']['moderate_impact']}km: {', '.join(moderate_impact_stores)}"
+                        )
+                        alert_needed = True
+                        confidence += 0.10
+
+                    # Add distance details for closest stores
+                    for store_name, distance in nearby_stores[:3]:
+                        decision_reasons.append(f"  • {store_name}: {distance:.2f}km from event")
                 else:
-                    affected_locations = [store["name"] for store in self.config["store_locations"]]
+                    decision_reasons.append("No stores within 5km of event location")
 
-        if not affected_locations and "dublin" in (event.location or "").lower():
-            # General Dublin event - all stores potentially affected
-            affected_locations = [store["name"] for store in self.config["store_locations"]]
-            decision_reasons.append("Dublin-wide event - all stores may see impact")
+            elif "dublin" in event.location.lower():
+                # Generic Dublin event - all stores potentially affected
+                affected_locations = [store["name"] for store in self.config["store_locations"]]
+                decision_reasons.append("Dublin-wide event - all stores may see impact")
+                alert_needed = True
+                confidence += 0.05
 
         # DATA-DRIVEN ENHANCEMENT: Check location traffic and inventory
         if self.use_real_data and self.feature_calculator and affected_locations:
@@ -723,6 +907,368 @@ Format your response with clear headings for each section."""
                 "Foot traffic exceeds capacity",
                 "Transaction processing times >10 minutes",
                 "Stockouts of key convenience items"
+            ]
+        )
+
+        return alert
+
+    def _evaluate_weather_extreme(self, event: DetectedEvent) -> Optional[BusinessAlert]:
+        """
+        Evaluate weather extreme event (heatwave, cold snap, flooding, storm)
+
+        Business Rules:
+        1. Identify weather type from event description
+        2. Map to weather-sensitive product categories
+        3. Check seasonal patterns and current stock
+        4. (Data-driven): Use actual seasonal sales data and inventory
+        """
+        decision_reasons = []
+        alert_needed = False
+        confidence = 0.6
+
+        # Identify weather type
+        event_text = f"{event.title} {event.description}".lower()
+        weather_type = None
+
+        if any(keyword in event_text for keyword in ["heatwave", "heat", "hot", "temperature soaring"]):
+            weather_type = "heatwave"
+        elif any(keyword in event_text for keyword in ["cold snap", "freeze", "frost", "arctic"]):
+            weather_type = "cold_snap"
+        elif any(keyword in event_text for keyword in ["flood", "flooding", "storm", "heavy rain"]):
+            weather_type = "flooding"
+
+        if not weather_type:
+            decision_reasons.append("Could not identify specific weather type")
+            return None
+
+        decision_reasons.append(f"Weather type identified: {weather_type}")
+
+        # Map to categories
+        weather_category_map = {
+            "heatwave": ["Skincare", "OTC : Allergy", "Nutritional Supplements"],
+            "cold_snap": ["OTC : Cold & Flu", "Vitamins"],
+            "flooding": ["OTC : First Aid", "Female Toiletries : Hygiene"],
+        }
+
+        affected_categories = weather_category_map.get(weather_type, [])
+
+        # DATA-DRIVEN ENHANCEMENT
+        if self.use_real_data and self.feature_calculator:
+            try:
+                features = self.feature_calculator.get_weather_features(
+                    weather_type=weather_type,
+                    as_of_date=date.today()
+                )
+
+                if features and 'category_patterns' in features:
+                    for category, pattern in features['category_patterns'].items():
+                        decision_reasons.append(
+                            f"📊 DATA: {category} current stock = {pattern.get('current_stock', 0):.0f} units"
+                        )
+
+                        if 'days_of_supply_peak' in pattern:
+                            days_supply = pattern['days_of_supply_peak']
+                            decision_reasons.append(
+                                f"📊 DATA: Days of supply at seasonal peak = {days_supply:.1f} days"
+                            )
+
+                            if days_supply < 7:
+                                alert_needed = True
+                                confidence = 0.85
+                                decision_reasons.append(
+                                    f"⚠️  LOW STOCK: Only {days_supply:.1f} days at peak seasonal demand"
+                                )
+                            elif days_supply < 14:
+                                alert_needed = True
+                                confidence = 0.75
+                                decision_reasons.append(
+                                    f"⚠️  MODERATE: {days_supply:.1f} days supply - monitor closely"
+                                )
+
+            except Exception as e:
+                decision_reasons.append(f"⚠️  Could not load weather features: {e}")
+
+        # Heuristic fallback
+        if event.severity in ["high", "critical"]:
+            alert_needed = True
+            confidence += 0.1
+            decision_reasons.append(f"High severity weather event: {event.severity}")
+
+        if not alert_needed:
+            return None
+
+        # Create alert
+        playbook = get_playbook("weather_extreme", "moderate")
+        immediate, short_term, monitoring = convert_playbook_to_actions(playbook)
+
+        decision = AlertDecision(
+            alert_needed=alert_needed,
+            confidence=min(confidence, 1.0),
+            reasoning=decision_reasons,
+            key_metrics={
+                "weather_type": weather_type,
+                "affected_categories": affected_categories,
+            }
+        )
+
+        severity_level = "high" if event.severity in ["high", "critical"] else "moderate"
+
+        alert = BusinessAlert(
+            alert_id=str(uuid.uuid4()),
+            generated_at=datetime.now().isoformat(),
+            event_id=event.source_url,
+            alert_type="weather_extreme",
+            severity=severity_level,
+            urgency="within_24h" if event.severity == "critical" else "within_week",
+            event_title=event.title,
+            event_description=event.description,
+            event_date=event.event_date,
+            event_location=event.location,
+            affected_categories=affected_categories,
+            affected_locations=[store["name"] for store in self.config["store_locations"]],
+            estimated_impact="moderate",
+            decision=decision,
+            playbook_name=playbook.name,
+            immediate_actions=immediate,
+            short_term_actions=short_term,
+            monitoring_plan=monitoring,
+            escalation_criteria=[
+                f"Stock levels for {weather_type} products drop below 5 days supply",
+                "Customer demand exceeds 150% of seasonal peak",
+                "Supplier delivery delays occur"
+            ]
+        )
+
+        return alert
+
+    def _evaluate_supply_disruption(self, event: DetectedEvent) -> Optional[BusinessAlert]:
+        """
+        Evaluate supply disruption event (supplier issues, shipping delays, port strikes)
+
+        Business Rules:
+        1. Identify affected supplier (if mentioned)
+        2. Check supplier criticality
+        3. Assess impact on product availability
+        4. (Data-driven): Use actual supplier dependency data
+        """
+        decision_reasons = []
+        alert_needed = False
+        confidence = 0.6
+
+        # Try to identify supplier
+        event_text = f"{event.title} {event.description}".lower()
+        affected_supplier = None
+
+        # Check if supplier mentioned in event
+        # (In production, would use NER or entity extraction)
+        if "supplier" in event_text or "manufacturer" in event_text:
+            decision_reasons.append("Supplier-related disruption detected")
+            alert_needed = True
+            confidence += 0.2
+
+        # DATA-DRIVEN ENHANCEMENT
+        if self.use_real_data and self.feature_calculator:
+            try:
+                features = self.feature_calculator.get_supply_disruption_features(
+                    as_of_date=date.today()
+                )
+
+                if features and 'supplier_criticality' in features:
+                    critical_suppliers = {
+                        name: info for name, info in features['supplier_criticality'].items()
+                        if info['criticality_rank'] in ['CRITICAL', 'HIGH']
+                    }
+
+                    decision_reasons.append(
+                        f"📊 DATA: {len(critical_suppliers)} critical/high suppliers identified"
+                    )
+
+                    # If event mentions supplier impact
+                    if alert_needed:
+                        for supplier, info in list(critical_suppliers.items())[:3]:
+                            decision_reasons.append(
+                                f"  • {supplier}: {info['revenue_dependency']*100:.1f}% revenue dependency"
+                            )
+
+                        alert_needed = True
+                        confidence = 0.90
+                        decision_reasons.append(
+                            "🚨 CRITICAL: Supply disruption could affect major suppliers"
+                        )
+
+            except Exception as e:
+                decision_reasons.append(f"⚠️  Could not load supply disruption features: {e}")
+
+        # Heuristic: High severity supply issues always alert
+        if event.severity in ["high", "critical"]:
+            alert_needed = True
+            confidence += 0.1
+            decision_reasons.append(f"High severity supply disruption: {event.severity}")
+
+        if not alert_needed:
+            return None
+
+        # Create alert
+        playbook = get_playbook("supply_disruption", "critical")
+        immediate, short_term, monitoring = convert_playbook_to_actions(playbook)
+
+        decision = AlertDecision(
+            alert_needed=alert_needed,
+            confidence=min(confidence, 1.0),
+            reasoning=decision_reasons,
+            key_metrics={
+                "event_severity": event.severity,
+            }
+        )
+
+        alert = BusinessAlert(
+            alert_id=str(uuid.uuid4()),
+            generated_at=datetime.now().isoformat(),
+            event_id=event.source_url,
+            alert_type="supply_disruption",
+            severity="critical" if event.severity in ["high", "critical"] else "high",
+            urgency="immediate",
+            event_title=event.title,
+            event_description=event.description,
+            event_date=event.event_date,
+            event_location=event.location,
+            affected_categories=[],
+            affected_locations=[store["name"] for store in self.config["store_locations"]],
+            estimated_impact="high",
+            decision=decision,
+            playbook_name=playbook.name,
+            immediate_actions=immediate,
+            short_term_actions=short_term,
+            monitoring_plan=monitoring,
+            escalation_criteria=[
+                "Critical suppliers confirm delayed deliveries",
+                "Stock levels for key products drop below 10 days",
+                "No alternative suppliers available"
+            ]
+        )
+
+        return alert
+
+    def _evaluate_viral_trend(self, event: DetectedEvent) -> Optional[BusinessAlert]:
+        """
+        Evaluate viral trend event (social media buzz, product trending)
+
+        Business Rules:
+        1. Identify trending product/category
+        2. Check if we stock it
+        3. Assess current inventory vs potential spike
+        4. (Data-driven): Use product search and stock levels
+        """
+        decision_reasons = []
+        alert_needed = False
+        confidence = 0.5
+
+        # Try to identify product keywords from event
+        event_text = f"{event.title} {event.description}".lower()
+        product_keyword = None
+
+        # Common viral product patterns
+        viral_keywords = ["vitamin", "supplement", "skincare", "collagen", "magnesium", "protein"]
+        for keyword in viral_keywords:
+            if keyword in event_text:
+                product_keyword = keyword
+                break
+
+        if not product_keyword:
+            decision_reasons.append("No specific product identified in viral trend")
+            # Try to extract from title
+            words = event.title.split()
+            if len(words) > 0:
+                product_keyword = words[0].lower()
+                decision_reasons.append(f"Using keyword from title: {product_keyword}")
+
+        # DATA-DRIVEN ENHANCEMENT
+        if self.use_real_data and self.feature_calculator and product_keyword:
+            try:
+                features = self.feature_calculator.get_viral_trend_features(
+                    product_keyword=product_keyword,
+                    as_of_date=date.today()
+                )
+
+                if features and features.get('found'):
+                    product_count = features.get('matching_products_count', 0)
+                    decision_reasons.append(
+                        f"📊 DATA: Found {product_count} products matching '{product_keyword}'"
+                    )
+
+                    for product in features.get('products', [])[:3]:
+                        if 'can_capitalize' in product:
+                            decision_reasons.append(
+                                f"  • {product['product']}: {product.get('current_stock', 0):.0f} units"
+                            )
+                            decision_reasons.append(
+                                f"    Days at 4x spike: {product.get('days_of_supply_at_4x_spike', 0):.1f} days"
+                            )
+
+                            if product.get('can_capitalize', False):
+                                alert_needed = True
+                                confidence = 0.80
+                                decision_reasons.append(
+                                    "✅ OPPORTUNITY: Sufficient stock to capitalize on viral trend"
+                                )
+                            else:
+                                alert_needed = True
+                                confidence = 0.75
+                                decision_reasons.append(
+                                    "⚠️  LIMITED STOCK: May sell out quickly during viral spike"
+                                )
+                else:
+                    decision_reasons.append(f"No products found matching '{product_keyword}'")
+                    return None
+
+            except Exception as e:
+                decision_reasons.append(f"⚠️  Could not load viral trend features: {e}")
+
+        # Heuristic: High urgency trends always alert
+        if event.urgency == "immediate":
+            alert_needed = True
+            confidence += 0.1
+            decision_reasons.append("Immediate action needed for viral trend")
+
+        if not alert_needed:
+            return None
+
+        # Create alert
+        playbook = get_playbook("viral_trend", "moderate")
+        immediate, short_term, monitoring = convert_playbook_to_actions(playbook)
+
+        decision = AlertDecision(
+            alert_needed=alert_needed,
+            confidence=min(confidence, 1.0),
+            reasoning=decision_reasons,
+            key_metrics={
+                "product_keyword": product_keyword,
+            }
+        )
+
+        alert = BusinessAlert(
+            alert_id=str(uuid.uuid4()),
+            generated_at=datetime.now().isoformat(),
+            event_id=event.source_url,
+            alert_type="viral_trend",
+            severity="moderate",
+            urgency="within_24h",
+            event_title=event.title,
+            event_description=event.description,
+            event_date=event.event_date,
+            event_location=event.location,
+            affected_categories=[],
+            affected_locations=[store["name"] for store in self.config["store_locations"]],
+            estimated_impact="moderate",
+            decision=decision,
+            playbook_name=playbook.name,
+            immediate_actions=immediate,
+            short_term_actions=short_term,
+            monitoring_plan=monitoring,
+            escalation_criteria=[
+                "Product sells out in >50% of stores",
+                "Social media mentions increase >500%",
+                "Competitor stockouts reported"
             ]
         )
 

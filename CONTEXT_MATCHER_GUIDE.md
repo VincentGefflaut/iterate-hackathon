@@ -48,15 +48,54 @@ The Context Matcher uses **deterministic business rules** (not AI) to:
 # 1. Load detected events
 events = event_storage.load_events(date.today())
 
-# 2. Initialize matcher with business rules
-matcher = ContextMatcher()
+# 2. Initialize matcher with business rules (and optional LLM)
+matcher = ContextMatcher(enhance_with_llm=True)
 
 # 3. Evaluate each event
 for event in events:
+    # Rule-based decision (fast, deterministic)
     alert = matcher.evaluate_single_event(event)
+
+    # LLM enhancement (rich explanations)
     if alert:
-        # 4. Execute playbook actions
+        # Alert now includes:
+        # - Rule-based decision (YES/NO)
+        # - LLM business impact analysis
+        # - Enhanced recommendations
+        # - Manager talking points
         execute_alert(alert)
+```
+
+### LLM Enhancements (NEW)
+
+The Context Matcher now supports **optional LLM enhancements** for richer alerts:
+
+**Hybrid Approach:**
+- **Rules decide** → Fast, cheap, deterministic ($0 cost)
+- **LLM explains** → Rich insights, natural language (~$0.01/alert)
+
+**What LLM Adds:**
+1. **Business Impact Summary** - Natural language explanation
+2. **Enhanced Actions** - Specific product recommendations, execution tips
+3. **Risk Assessment** - What could go wrong, opportunities, timeline
+4. **Manager Talking Points** - Ready-to-use team briefing
+
+**Cost Comparison:**
+```
+Rules Only:        $0 per alert (instant)
+Rules + LLM:       ~$0.01 per alert (1-2 seconds)
+
+10 alerts/day:     $0.30/month with LLM vs. $0 without
+100 alerts/day:    $3/month with LLM vs. $0 without
+```
+
+**Enable/Disable:**
+```python
+# With LLM (default - richer alerts)
+matcher = ContextMatcher(enhance_with_llm=True)
+
+# Rules only (faster, cheaper)
+matcher = ContextMatcher(enhance_with_llm=False)
 ```
 
 ## Usage
@@ -64,8 +103,11 @@ for event in events:
 ### Basic Usage
 
 ```bash
-# Process today's detected events
+# Process today's events with LLM enhancements (default)
 python run_context_matcher.py
+
+# Rules only (faster, cheaper, deterministic)
+python run_context_matcher.py --no-llm
 
 # Process specific date
 python run_context_matcher.py --date 2024-11-15

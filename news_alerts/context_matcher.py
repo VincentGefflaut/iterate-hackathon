@@ -5,13 +5,27 @@ This is Agent 2 in the two-agent architecture:
 - Agent 1 (Event Detector): Extracts facts from news → DetectedEvent
 - Agent 2 (Context Matcher): Matches events to business → BusinessAlert
 
-Uses pure business logic (NO LLM) for binary YES/NO decisions.
+Uses business rules for binary YES/NO decisions, with optional LLM enhancements for:
+- Natural language explanations
+- Business impact analysis
+- Enhanced recommendations
+- Manager talking points
 """
 
 import os
+import anthropic
 from datetime import date, datetime
 from typing import List, Optional, Dict, Any, Tuple
+from pathlib import Path
 import uuid
+
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    env_path = Path(__file__).parent.parent / '.env'
+    load_dotenv(dotenv_path=env_path)
+except ImportError:
+    pass
 
 from .models import DetectedEvent
 from .alert_models import BusinessAlert, AlertDecision, convert_playbook_to_actions
@@ -26,16 +40,29 @@ class ContextMatcher:
     Uses business rules to determine if an alert is needed and which actions to take.
     """
 
-    def __init__(self, use_real_data: bool = False):
+    def __init__(self, use_real_data: bool = False, enhance_with_llm: bool = True):
         """
         Initialize context matcher
 
         Args:
             use_real_data: If True, attempt to load real inventory/sales data from alert_features
                           If False, use heuristic-based decisions
+            enhance_with_llm: If True, use LLM to generate rich explanations and recommendations
+                             If False, use only rule-based logic (faster, cheaper)
         """
         self.use_real_data = use_real_data
+        self.enhance_with_llm = enhance_with_llm
         self.storage = EventStorage()
+
+        # Initialize LLM client if enhancements enabled
+        if self.enhance_with_llm:
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            if api_key:
+                self.llm_client = anthropic.Anthropic(api_key=api_key)
+                self.llm_model = os.getenv("CLAUDE_MODEL") or "claude-sonnet-4-5-20250929"
+            else:
+                print("Warning: ANTHROPIC_API_KEY not set. LLM enhancements disabled.")
+                self.enhance_with_llm = False
 
         # Business configuration (would come from database/config in production)
         self.config = {
@@ -119,12 +146,135 @@ class ContextMatcher:
         """
         # Route to appropriate matcher based on event type
         if event.event_type == "health_emergency":
-            return self._evaluate_health_emergency(event)
+            alert = self._evaluate_health_emergency(event)
         elif event.event_type == "major_event":
-            return self._evaluate_major_event(event)
+            alert = self._evaluate_major_event(event)
         else:
             # For other event types, create basic alert
-            return self._evaluate_generic_event(event)
+            alert = self._evaluate_generic_event(event)
+
+        # Enhance with LLM if enabled and alert was generated
+        if alert and self.enhance_with_llm:
+            alert = self._enhance_alert_with_llm(alert, event)
+
+        return alert
+
+    def _enhance_alert_with_llm(self, alert: BusinessAlert, event: DetectedEvent) -> BusinessAlert:
+        """
+        Enhance an alert with LLM-generated explanations and insights
+
+        Args:
+            alert: BusinessAlert from rule-based logic
+            event: Original DetectedEvent
+
+        Returns:
+            Enhanced BusinessAlert with LLM-generated content
+        """
+        try:
+            # Build prompt with alert context
+            prompt = self._build_enhancement_prompt(alert, event)
+
+            # Call LLM
+            response = self.llm_client.messages.create(
+                model=self.llm_model,
+                max_tokens=2000,
+                temperature=0.3,  # Low temp for consistent, factual responses
+                messages=[{"role": "user", "content": prompt}]
+            )
+
+            # Extract text response
+            llm_response = ""
+            for block in response.content:
+                if hasattr(block, 'text'):
+                    llm_response += block.text
+
+            # Parse LLM response and enhance alert
+            enhanced_alert = self._parse_llm_enhancements(alert, llm_response)
+
+            return enhanced_alert
+
+        except Exception as e:
+            print(f"Warning: LLM enhancement failed: {e}")
+            print("Returning original rule-based alert")
+            return alert
+
+    def _build_enhancement_prompt(self, alert: BusinessAlert, event: DetectedEvent) -> str:
+        """Build prompt for LLM to enhance alert"""
+
+        prompt = f"""You are a business analyst for a retail pharmacy chain in Dublin, Ireland.
+
+A rule-based system has generated a business alert based on a detected event. Your job is to:
+1. Provide a clear, natural language explanation of the business impact
+2. Enhance the action recommendations with specific, practical details
+3. Identify additional considerations and risks
+4. Provide talking points for managers to brief their teams
+
+EVENT DETECTED:
+Title: {event.title}
+Description: {event.description}
+Type: {event.event_type}
+Severity: {event.severity}
+Location: {event.location or 'Not specified'}
+Date: {event.event_date or 'Ongoing'}
+
+RULE-BASED DECISION:
+Alert Type: {alert.alert_type}
+Severity: {alert.severity}
+Urgency: {alert.urgency}
+Affected Categories: {', '.join(alert.affected_categories) if alert.affected_categories else 'None'}
+Affected Stores: {', '.join(alert.affected_locations) if alert.affected_locations else 'All stores'}
+
+Decision Reasoning:
+{chr(10).join(f"  • {reason}" for reason in alert.decision.reasoning)}
+
+Current Recommended Actions:
+IMMEDIATE:
+{chr(10).join(f"  {i}. {action}" for i, action in enumerate(alert.immediate_actions, 1)) if alert.immediate_actions else "  None"}
+
+SHORT-TERM:
+{chr(10).join(f"  {i}. {action}" for i, action in enumerate(alert.short_term_actions, 1)) if alert.short_term_actions else "  None"}
+
+Please provide:
+
+1. BUSINESS IMPACT SUMMARY (2-3 sentences):
+   A clear, jargon-free explanation of what this means for our business. Focus on customer needs, sales implications, and operational challenges.
+
+2. ENHANCED ACTIONS (be specific and practical):
+   - For each recommended action, add practical details like:
+     * Which specific products to focus on
+     * How to prioritize (what to do first)
+     * Tips for execution
+   - Suggest 1-2 additional actions if warranted
+
+3. RISK ASSESSMENT:
+   - What could go wrong if we don't act?
+   - What are the upside opportunities?
+   - Timeline considerations (how quickly must we act?)
+
+4. MANAGER TALKING POINTS (3-5 bullet points):
+   Key messages to communicate to store teams, phrased for verbal delivery.
+
+Be specific to Dublin/Ireland market. Focus on actionable insights. Keep language professional but accessible.
+
+Format your response with clear headings for each section."""
+
+        return prompt
+
+    def _parse_llm_enhancements(self, alert: BusinessAlert, llm_response: str) -> BusinessAlert:
+        """
+        Parse LLM response and add enhancements to alert
+
+        For now, we'll add the LLM response as additional context
+        Future: Could parse structured sections
+        """
+        # Store LLM insights in the alert
+        # We can add this to the decision reasoning or create new fields
+
+        # Add to decision reasoning
+        alert.decision.reasoning.insert(0, "=== LLM Business Analysis ===")
+        alert.decision.reasoning.insert(1, llm_response)
+
+        return alert
 
     def _evaluate_health_emergency(self, event: DetectedEvent) -> Optional[BusinessAlert]:
         """

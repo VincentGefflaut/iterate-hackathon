@@ -25,7 +25,8 @@ from news_alerts import (
 def run_detection(
     focus_type: str = "all",
     newsapi_key: str = None,
-    anthropic_key: str = None
+    anthropic_key: str = None,
+    max_articles: int = 50
 ):
     """
     Main detection pipeline
@@ -34,12 +35,14 @@ def run_detection(
         focus_type: "all", "health", or "events"
         newsapi_key: Optional NewsAPI key
         anthropic_key: Optional Anthropic API key
+        max_articles: Maximum number of articles to process (default: 50)
     """
     print("=" * 80)
     print("NEWS ALERTS - Event Detection Pipeline")
     print("=" * 80)
     print(f"Date: {date.today().isoformat()}")
     print(f"Focus: {focus_type}")
+    print(f"Max articles: {max_articles}")
     print()
 
     # Initialize components
@@ -70,14 +73,25 @@ def run_detection(
         articles.extend(weather_articles)
         print(f"    Found {len(weather_articles)} weather alerts")
 
-    print(f"\nTotal articles: {len(articles)}")
+    print(f"\nTotal articles fetched: {len(articles)}")
 
     if len(articles) == 0:
         print("\nNo articles found. Exiting.")
         return
 
+    # Limit number of articles to process
+    if len(articles) > max_articles:
+        print(f"⚠️  Limiting to {max_articles} articles to control API costs")
+        print(f"   (Use --max-articles to adjust this limit)")
+        articles = articles[:max_articles]
+
+    print(f"Processing {len(articles)} articles...")
+
     # Detect events
     print("\nDetecting events (this may take a few minutes)...")
+    print(f"Estimated cost: ${len(articles) * 0.003:.2f} (at ~$0.003/article)")
+    print()
+
     detected_events = []
     event_types_to_detect = []
 
@@ -283,6 +297,13 @@ def main():
         help="Anthropic API key (optional, can also use ANTHROPIC_API_KEY env var)"
     )
 
+    parser.add_argument(
+        "--max-articles",
+        type=int,
+        default=50,
+        help="Maximum number of articles to process (default: 50, controls API costs)"
+    )
+
     args = parser.parse_args()
 
     # Handle different modes
@@ -302,7 +323,8 @@ def main():
         run_detection(
             focus_type=focus_type,
             newsapi_key=args.newsapi_key,
-            anthropic_key=args.anthropic_key
+            anthropic_key=args.anthropic_key,
+            max_articles=args.max_articles
         )
 
 
